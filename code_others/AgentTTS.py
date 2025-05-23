@@ -142,14 +142,11 @@ class RAGAgentTTS(AgentTTS):
 
 
     def evolve(self, evaluated_population, population_size, crossover_rate, mutation_rate):
-        """生成新一代种群"""
         new_population = []
 
-        # 保留精英
         elites = sorted(evaluated_population, key=lambda x: x['score'][self.archive.environment.main_metric], reverse=True)[:population_size]  # elite size
         new_population.extend([e['params'] for e in elites])
 
-        # 生成后代
         while len(new_population) < population_size*2:
             parent1 = self._rank_selection(evaluated_population)
             parent2 = self._rank_selection(evaluated_population)
@@ -161,7 +158,6 @@ class RAGAgentTTS(AgentTTS):
 
             child = self._mutate(child, mutation_rate)
 
-            # 预算检查
             if self.calculate_budget(child) <= self.budget:
                 new_population.append(child)
 
@@ -169,14 +165,12 @@ class RAGAgentTTS(AgentTTS):
         return population
 
     def _rank_selection(self, evaluated_population):
-        """基于排名的选择"""
         sorted_pop = sorted(evaluated_population, key=lambda x: x['score'][self.archive.environment.main_metric], reverse=True)
         ranks = np.arange(1, len(sorted_pop) + 1)
         probs = ranks / ranks.sum()
         return sorted_pop[np.random.choice(len(sorted_pop), p=probs)]['params']
 
     def _crossover(self, parent1, parent2):
-        """单点交叉"""
         child = {}
         subtasks = self.sub_tasks
         crossover_point = random.randint(1, len(subtasks) - 1)
@@ -189,14 +183,11 @@ class RAGAgentTTS(AgentTTS):
         return child
 
     def _mutate(self, individual, mutation_rate):
-        """随机变异"""
         mutated = individual.copy()
         for subtask, model_choice in zip(self.sub_tasks, self.model_choices):
             if random.random() < mutation_rate:  # mutation rate
-                # 变异模型选择
                 mutated[subtask]["model"] = random.choice(model_choice)
             if random.random() < mutation_rate:
-                # 变异采样次数（±10步长）
                 current = mutated[subtask]["samples"]
                 mutated[subtask]["samples"] = max(1, current + random.choice([-10, 0, 10]))
         return mutated
@@ -233,34 +224,8 @@ class RAGAgentTTS(AgentTTS):
             else:
                 insight2 = "None"
             if not no_insight3:
-                # best for 850
-                # "The total compute budget is shared across all subtasks and they are interdependent. If we could not assign the optimal model and sample count to every subtask, consider the following strategy. Prioritize each subtask and try different combinations of the budget allocation in other tasks and Balance the allocations among subtasks. "
-                # insight3 = "The budget allocated to an earlier subtask influences both model selection and the optimal number of samples for subsequent subtasks. Because the total compute budget is shared across all subtasks and they are interdependent, it is often not possible to assign the optimal model and sample count to every subtask. In such cases, first allocate the optimal budget to each subtask and try to find the optimal budget allocation on others for maximal final performance. Meanwhile, . This process helps reveal which subtasks have the greatest impact on overall performance and should be prioritized in budget allocation."
-                # insight3 = "Because the total budget is shared among all subtasks, how should it be allocated? Based on the history, which subtask(s) should be prioritized in budget allocation? Please reason step by step to plan a budget allocation strategy that maximizes overall task performance."
-                # v2
-                # insight3 = "The total compute budget is shared across all subtasks, which are interdependent. When it is not possible to assign the optimal model and sample count to every subtask, plan the search to identify the best trade-off in budget allocation across subtasks."
-                # v3
-                # insight3 = """The total compute budget is shared across all subtasks, which are interdependent. When it is not possible to assign the optimal model and sample count to every subtask, plan the search to find the best trade-off in budget allocation across subtasks. Use the following strategy:
-                # 1. **Identify Critical Subtasks**: Rank subtasks by their impact on overall performance. Prioritize allocating more budget to higher-impact subtasks.
-                # 2. **Progressive Allocation**: Starting from the first subtask, iteratively assign budget while considering the remaining budget and downstream impact. Adjust early allocations if they overly constrain later ones.
-                # 3. **Simulate Alternatives**: Explore multiple plausible allocations by varying model/sample choices within budget constraints. Compare projected overall task performance across these configurations.
-                # 4. **Select Best Trade-off**: Choose the configuration that maximizes overall task performance while respecting the total budget. Clearly explain trade-offs made and why certain subtasks received more or fewer resources.
-                # Reason step by step and justify your decisions throughout the planning process.
-                # """
-                # v4
-                insight3 = """The total compute budget is shared across all interdependent subtasks. When it is not possible to assign the optimal model and sample count to every subtask, plan the search to find the best trade-off in budget allocation.
-
-Use the following strategy:
-
-Fix One, Adjust Others: Start by selecting a strong configuration (model and sample count) for the most critical subtask based on prior knowledge or impact.
-
-Greedy Adjustment: For the remaining subtasks, allocate budget greedily by choosing the best affordable configuration under the remaining budget.
-
-Backtrack if Needed: If later subtasks suffer from too little budget, backtrack to revise earlier allocations and rebalance the trade-off.
-
-Evaluate Alternatives: Compare 2–3 allocation plans that differ in which subtask is prioritized first. Choose the one that yields the best overall performance estimate.
-
-Explain each step and the reasoning behind your decisions."""
+                insight3 = "The total compute budget is shared across all subtasks and they are interdependent. If we could not assign the optimal model and sample count to every subtask, consider the following strategy. Prioritize each subtask and try different combinations of the budget allocation in other tasks and Balance the allocations among subtasks. "
+                
             else:
                 insight3 = "None"
             old_history_str = "\n".join(
@@ -322,7 +287,7 @@ Explain each step and the reasoning behind your decisions."""
 
     def init_candidates(self):
         candidates = []
-        # budget_for_subtask = self.budget / len(self.sub_tasks)
+        budget_for_subtasks = self.budget / len(self.sub_tasks)
         if self.task_name in ["2wikihopqa","2wikihopqa_75","2wikihopqa_100", "hotpotqa"]:
             budget_for_subtasks = [self.budget*0.85, self.budget*0.15]
         elif self.task_name in ["cwq", "webqsp"]:
@@ -335,7 +300,27 @@ Explain each step and the reasoning behind your decisions."""
         if not no_insight1:
             for sub_task, budget, model_choice, Np, Nd in zip(self.sub_tasks, budget_for_subtasks, self.model_choices, Np_list, Nd_list):
                 max_model_size = self.M_dict[sub_task]
-                # 添加每个model size对应预算为1的采样数量, 包括大模型和小模型
+                # budget =
+                lowest_budget_for_others = 0
+                for sub_task2, model_choice2, Np2, Nd2 in zip(self.sub_tasks, self.model_choices, Np_list, Nd_list):
+                    if sub_task2 != sub_task:
+                        lowest_model_choice = model_choice2[0]
+                        model_size = self.get_model_size(self.pattern, lowest_model_choice)
+                        lowest_budget = self.convert_num_samples_to_budget(1, model_size, Np2, Nd2)
+                        lowest_budget_for_others += lowest_budget
+                highest_budget_for_others = 0
+                for sub_task2, model_choice2, Np2, Nd2 in zip(self.sub_tasks, self.model_choices, Np_list, Nd_list):
+                    if sub_task2 != sub_task:
+                        highest_model_choice = model_choice2[-1]
+                        model_size = self.get_model_size(self.pattern, highest_model_choice)
+                        highest_budget = self.convert_num_samples_to_budget(1, model_size, Np2, Nd2)
+                        highest_budget_for_others += highest_budget
+                budget_max_available = self.budget - lowest_budget_for_others
+                budget_for_current_max_model_sampling1 = self.convert_num_samples_to_budget(1, max_model_size, Np, Nd)
+                if budget_for_current_max_model_sampling1 < budget_max_available:
+                    budget = budget_for_current_max_model_sampling1
+                else:
+                    budget = budget_max_available
                 for model in model_choice:
                     candidate1 = {}
                     current_model_size = self.get_model_size(self.pattern, model)  # model_choice[0] is the minimal
@@ -343,25 +328,31 @@ Explain each step and the reasoning behind your decisions."""
                     candidate1[sub_task] = {}
                     candidate1[sub_task]['model'] = model
                     S = self.convert_budget_to_num_samples(budget, current_model_size, Np, Nd)
-                    S = 1 if S < 1 else S
+                    if S < 1:
+                        continue
                     S = 60 if S > 60 else S
                     # budget = S / (2 * beta_1) + (alpha * beta_3 - 1) / 2
                     candidate1[sub_task]['budget'] = budget
                     candidate1[sub_task]['samples'] = int(S)
                     for sub_task2, budget2, model_choice2, Np2, Nd2 in zip(self.sub_tasks, budget_for_subtasks, self.model_choices, Np_list, Nd_list):
+                        budget_remaining = self.budget - budget
+                        budget2 = budget_remaining
                         if sub_task2 != sub_task:
                             candidate1[sub_task2] = {}
-                            # 首先尝试最大尺寸
-                            current_model_size2 = self.get_model_size(self.pattern, model_choice2[-1])
-                            budget_unit = self.convert_num_samples_to_budget(1, current_model_size2, Np2, Nd2)
-                            print("log, budget_unit:", budget_unit)
-                            if budget2 > budget_unit:
+                            if budget2 > highest_budget_for_others:
+                                current_model_size2 = self.get_model_size(self.pattern, model_choice2[-1])
+                                budget_unit = self.convert_num_samples_to_budget(1, current_model_size2, Np2, Nd2)
+                                print("log, budget_unit:", budget_unit)
                                 candidate1[sub_task2]['model'] = model_choice2[-1]
                                 candidate1[sub_task2]['samples'] = 1
-                                candidate1[sub_task2]['budget'] = budget2
+                                candidate1[sub_task2]['budget'] = budget_unit
                             else:
-                                candidate1[sub_task2]['model'] = model_choice2[-2]
+                                current_model_size2 = self.get_model_size(self.pattern, model_choice2[0])
+                                budget_unit = self.convert_num_samples_to_budget(1, current_model_size2, Np2, Nd2)
+                                print("log, budget_unit:", budget_unit)
+                                candidate1[sub_task2]['model'] = model_choice2[0]
                                 candidate1[sub_task2]['samples'] = 1
+                                candidate1[sub_task2]['budget'] = budget_unit
 
                     candidates.append(candidate1)
         else:
@@ -371,25 +362,6 @@ Explain each step and the reasoning behind your decisions."""
 
 
 if __name__ == '__main__':
-    # nohup python AgentTTS.py --task_name 2wikihopqa_75 --budget 1000 --iterations 5 --batch_size 10 > log_ours_2wikihopqa_75_budget1000.log 2>&1 &
-    # nohup python AgentTTS.py --task_name 2wikihopqa_100 --budget 1000 --iterations 5 --batch_size 10 > log_ours_2wikihopqa_100_budget1000.log 2>&1 &
-    # nohup python AgentTTS.py --task_name 2wikihopqa --budget 1000 > log_ours_2wikihopqa_budget1000.log 2>&1 &
-    # nohup python AgentTTS.py --task_name 2wikihopqa --budget 500 --iterations 5 --batch_size 10 > log_ours_2wikihopqa_budget500.log 2>&1 &
-    # nohup python AgentTTS.py --task_name 2wikihopqa --budget 850 --iterations 5 --batch_size 10 > log_ours_2wikihopqa_budget850.log 2>&1 &
-    # nohup python AgentTTS.py --task_name 2wikihopqa --budget 2000 --iterations 5 --batch_size 10 > log_ours_2wikihopqa_budget2000.log 2>&1 &
-    # nohup python AgentTTS.py --task_name cwq --budget 550 > log_ours_cwq_budget550.log 2>&1 &
-    # nohup python AgentTTS.py --task_name webqsp --budget 550 > log_ours_webqsp_budget550.log 2>&1 &
-    # nohup python AgentTTS.py --task_name taskbench_dailylifeapis --budget 2000 > log_ours_taskbench_dailylifeapis_budget2000.log 2>&1 &
-    # nohup python AgentTTS.py --task_name chatdev --budget 2000 > log_ours_taskbench_chatdev_budget2000.log 2>&1 &
-
-    # ablation study
-    # nohup python AgentTTS.py --task_name 2wikihopqa --budget 900 --iterations 5 --batch_size 10 --no_insight1 > log_ours_2wikihopqa_budget900_noinsight1.log 2>&1 &
-    # nohup python AgentTTS.py --task_name 2wikihopqa --budget 900 --iterations 5 --batch_size 10 --no_insight2 > log_ours_2wikihopqa_budget900_noinsight2.log 2>&1 &
-    # nohup python AgentTTS.py --task_name 2wikihopqa --budget 900 --iterations 5 --batch_size 10 --no_insight3 > log_ours_2wikihopqa_budget900_noinsight3.log 2>&1 &
-    # nohup python AgentTTS.py --task_name 2wikihopqa --budget 850 --iterations 5 --batch_size 10 --no_insight1 > log_ours_2wikihopqa_budget850_noinsight1.log 2>&1 &
-    # nohup python AgentTTS.py --task_name 2wikihopqa --budget 850 --iterations 5 --batch_size 10 --no_insight2 > log_ours_2wikihopqa_budget850_noinsight2.log 2>&1 &
-    # nohup python AgentTTS.py --task_name 2wikihopqa --budget 850 --iterations 5 --batch_size 10 --no_insight3 > log_ours_2wikihopqa_budget850_noinsight3.log 2>&1 &
-
     parser = argparse.ArgumentParser()
     parser.add_argument('--task_name', type=str, default="2wikihopqa")
     parser.add_argument('--budget', type=int, default=1000,)
