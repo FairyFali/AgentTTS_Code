@@ -49,9 +49,6 @@ class RAGAgentTTS(AgentTTS):
             budget = beta2 * ((alpha * beta3 / beta1) * (beta1 + num_samples) - 1)
             return budget
         ```
-        and this formula:
-        Budget(model_size, number_of_samples, prompt_length, generation_length | subtask) = number_of_samples * (1/2 * generation_length/prompt_length) + (model_size / 3e9 * prompt_length/64 -1)/2. 
-        Here, model_size is the selected model size for the subtask, such as 8e9=8B, number_of_samples is how many samples are used, and prompt_length is the average prompt length and generation_length is the generation length for that subtask.
         The total budget is the sum of the budgets across all subtasks.
         
         Using the information I provide, please generate {batch_size} new candidate configurations that follow the insights and stay within the total budget. The output must be in strict JSON format, using the structure shown below:
